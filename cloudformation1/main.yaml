@@ -1,0 +1,166 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.1.0/24
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.2.0/24
+      VpcId: !Ref VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref EC2InstanceRole
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - ec2.amazonaws.com
+          Action:
+            - 'sts:AssumeRole'
+      Path: "/"
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: myKeyPair
+      ImageId: ami-0c55b159cbfafe1f0
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref EC2InstanceSecurityGroup
+          SubnetId: !Ref PrivateSubnet
+
+  EC2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2 instance security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrId: 0.0.0.0/0
+
+   LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+          Subnets:
+          - !Ref PublicSubnet
+
+   LoadBalancerTargetGroup:
+     Type: AWS::ElasticLoadBalancingV2::TargetGroup
+     Properties:
+       Name: EC2InstanceTargetGroup
+       Port: 80
+       Protocol: HTTP
+       VpcId: !Ref VPC
+
+   LoadBalancerListener:
+     Type: AWS::ElasticLoadBalancingV2::Listener
+     Properties:
+       LoadBalancerArn: !Ref LoadBalancer
+       Port: 80
+       Protocol: HTTP
+       DefaultActions:
+        - TargetGroupArn: !Ref LoadBalancerTargetGroup
+          Type: forward
+
+  AutoScalingGroup:
+     Type: AWS::AutoScaling::AutoScalingGroup
+     Properties:
+       DesiredCapacity: 10
+       MinSize: 10
+       MaxSize: 10
+       VPCZoneIdentifier:
+          - !Ref PrivateSubnet
+       LaunchTemplate:
+         LaunchTemplateId: !Ref LaunchTemplate
+         Version: $Latest
+
+   LaunchTemplate:
+     Type: AWS::EC2::LaunchTemplate
+     Properties:
+     LaunchTemplateName: EC2InstanceLaunchTemplate
+     LaunchTemplateData:
+       ImageId: ami-0c55b159cbfafe1f0
+         InstanceType: t2.micro
+          KeyName: myKeyPair
+   NetworkInterfaces:
+      - AssociatePublicIpAddress: false
+        DeleteOnTermination: true
+        DeviceIndex: 0
+        GroupSet:
+         - !Ref EC2InstanceSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd
+            service httpd start
+            chkconfig httpd on
+echo "Welcome to Apache" > /var/www/html/index.html
+
+   Outputs:
+      LoadBalancerDNS:
+        Description: Load balancer DNS name
+        Value: !GetAtt LoadBalancer.DNSName
+        Export:
+        Name: LoadBalancerDNS
