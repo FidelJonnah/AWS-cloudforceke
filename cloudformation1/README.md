@@ -10,3 +10,7 @@ Guidelines:
  The clodformation template should include the creation of all necessary  security groups, network interfaces and routing tables. 
  The cloudformation template should be written in YAML. 
  The 10 EC2 instances should be created in an Auto Scaling Group and be behind a Load Balancer to handle incoming traffic
+ 
+ 
+ 
+Note: In the above template, replace "myKeyPair" with the name of your existing key pair. Also make sure that the region in which you are creating the resources supports the Amazon Linux 2 AMI (ami-0c55b159cbfafe1f0).
